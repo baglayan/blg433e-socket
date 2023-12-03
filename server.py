@@ -4,14 +4,14 @@ import secrets
 import string
 import random
 
-def start_game(connectionSocket):
+def start_game(sock):
     print('Game started.')
 
     number = random.randint(0, 36)
     print('Number is ' + str(number))
-    connectionSocket.send
+    sock.send
 
-def update_game(connectionSocket):
+def update_game(sock):
     print('Update')
 
 privateString = '43d48a355933d4964751cd8c3d1f4ffe'
@@ -29,7 +29,6 @@ while True:
     if message == 'Start_Connection':
         print('Beginning auth process...')
         randomString = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(32))
-        print(randomString)
         connectionSocket.send(randomString.encode())
         concatString = privateString + randomString
         calculatedHash = hashlib.sha1(concatString.encode()).hexdigest()

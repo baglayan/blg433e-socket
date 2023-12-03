@@ -2,6 +2,15 @@ from socket import *
 import hashlib
 import string
 
+def receive_messages(sock):
+    while True:
+        message = sock.recv(1024).decode()
+        print('[SERVER] ' + message)
+    
+def update_game(sock):
+    while True:
+        message = input()
+        sock.send(message.encode())
 
 privateString = '43d48a355933d4964751cd8c3d1f4ffe'
 
