@@ -1,14 +1,24 @@
 from socket import *
 import hashlib
+import threading
 
 def create_socket(serverName, serverPort):
     clientSocket = socket(AF_INET, SOCK_STREAM)
     clientSocket.connect((serverName, serverPort))
     return clientSocket
 
-def receive_message(sock):
-    message = sock.recv(1024).decode()
-    print('[SERVER] ' + message)
+def receive_async(sock):
+    print('Start receive_async')
+    while True:
+        message = sock.recv(1024).decode()
+        if message:
+            print('[SERVER] ' + message)
+        
+def send_async(sock):
+    print('Start send_async')
+    while True:
+        message = input()
+        send_message(sock, message)
 
 def send_message(sock, message):
     sock.send(message.encode())
@@ -46,6 +56,15 @@ def main():
     send_message(clientSocket, startConnectionString)
 
     authenticate(clientSocket, privateString)
+
+    receive_thread = threading.Thread(target=receive_async, args=(clientSocket,))
+    receive_thread.start()
+
+    send_thread = threading.Thread(target=send_async, args=(clientSocket,))
+    send_thread.start()
+
+    receive_thread.join()
+    send_thread.join()
 
     close_socket(clientSocket)
 
