@@ -1,45 +1,53 @@
 from socket import *
 import hashlib
-import string
 
-def receive_messages(sock):
-    while True:
-        message = sock.recv(1024).decode()
-        print('[SERVER] ' + message)
-    
-def update_game(sock):
-    while True:
-        message = input()
-        sock.send(message.encode())
+def create_socket(serverName, serverPort):
+    clientSocket = socket(AF_INET, SOCK_STREAM)
+    clientSocket.connect((serverName, serverPort))
+    return clientSocket
 
-privateString = '43d48a355933d4964751cd8c3d1f4ffe'
+def receive_message(sock):
+    message = sock.recv(1024).decode()
+    print('[SERVER] ' + message)
 
-serverName = 'localhost'
-serverPort = 12000
+def send_message(sock, message):
+    sock.send(message.encode())
 
-clientSocket = socket(AF_INET, SOCK_STREAM)
-clientSocket.connect((serverName, serverPort))
+def authenticate(sock, privateString):
+    randomString = sock.recv(32).decode()
+    if len(randomString) != 32:
+        raise RuntimeError('Non-standard random string received. Aborting...')
+    concatString = privateString + randomString
 
-startConnectionString = 'Start_Connection'
+    if len(concatString) != 64:
+        raise RuntimeError('Non-standard auth string detected. Aborting...')
 
-clientSocket.send(startConnectionString.encode())
+    sha1Result = hashlib.sha1(concatString.encode()).hexdigest()
 
-randomString = clientSocket.recv(32).decode()
-if len(randomString) != 32:
-    raise RuntimeError('Non-standard random string received. Aborting...')
-concatString = privateString + randomString
+    send_message(sock, sha1Result)
 
-if len(concatString) != 64:
-    raise RuntimeError('Non-standard auth string detected. Aborting...')
+    postShaMessage = sock.recv(1024).decode()
+    print('[SERVER] ' + postShaMessage)
 
-sha1Result = hashlib.sha1(concatString.encode()).hexdigest()
+    if postShaMessage == 'Authentication succesful. Do you wish to proceed?' or postShaMessage == 'Authentication successful. Do you wish to proceed?':
+        send_message(sock, input())
 
-clientSocket.send(sha1Result.encode())
+def close_socket(sock):
+    sock.close()
 
-postShaMessage = clientSocket.recv(1024).decode()
-print('[SERVER] ' + postShaMessage)
+def main():
+    privateString = '43d48a355933d4964751cd8c3d1f4ffe'
+    serverName = 'localhost'
+    serverPort = 12000
 
-if postShaMessage == 'Authentication succesful. Do you wish to proceed?' or postShaMessage == 'Authentication successful. Do you wish to proceed?':
-    clientSocket.send(input().encode())
+    clientSocket = create_socket(serverName, serverPort)
 
-clientSocket.close()
+    startConnectionString = 'Start_Connection'
+    send_message(clientSocket, startConnectionString)
+
+    authenticate(clientSocket, privateString)
+
+    close_socket(clientSocket)
+
+if __name__ == '__main__':
+    main()

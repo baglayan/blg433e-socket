@@ -5,28 +5,25 @@ import string
 import random
 
 def create_socket():
-    serverSocket = socket(AF_INET, SOCK_STREAM)
-    return serverSocket
+    return socket(AF_INET, SOCK_STREAM)
 
-def bind_socket(serverSocket, serverPort):
-    serverSocket.bind(('', serverPort))
+def bind_socket(sock, port):
+    sock.bind(('', port))
 
-def start_listening(serverSocket):
-    serverSocket.listen(1)
+def start_listening(sock):
+    sock.listen(1)
 
-def accept_connection(serverSocket):
-    connectionSocket = serverSocket.accept()
-    return connectionSocket
+def accept_connection(sock):
+    return sock.accept()
 
-def send_packet(connectionSocket, message):
-    connectionSocket.send(message.encode())
+def send_packet(sock, message):
+    sock.send(message.encode())
 
-def receive_packet(connectionSocket, buffer_size):
-    received_data = connectionSocket.recv(buffer_size).decode()
-    return received_data
+def receive_packet(sock, buffer_size):
+    return sock.recv(buffer_size).decode()
 
-def close_connection(connectionSocket):
-    connectionSocket.close()
+def close_connection(sock):
+    sock.close()
 
 def start_game(sock):
     print('Game started.')
@@ -78,7 +75,7 @@ def main():
     print('Awaiting Start_Connection message...')
 
     while True:
-        connectionSocket = accept_connection(serverSocket)
+        connectionSocket, addr = accept_connection(serverSocket)
         message = receive_packet(connectionSocket, 1024)
         if message == 'Start_Connection':
             print('Beginning auth process...')
