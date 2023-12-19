@@ -1,6 +1,7 @@
 from socket import *
 import hashlib
 import threading
+import struct
 
 def create_socket(serverName, serverPort):
     clientSocket = socket(AF_INET, SOCK_STREAM)
@@ -10,18 +11,56 @@ def create_socket(serverName, serverPort):
 def receive_async(sock):
     print('Start receive_async')
     while True:
-        message = sock.recv(1024).decode()
-        if message:
-            print('[SERVER] ' + message)
+            message_type = sock.recv(1)
+            match message_type:
+                case b'\x00':
+                    payload_size = sock.recv(1)
+                    payload = sock.recv(payload_size[0]).decode()
+                    print('[SERVER] ' + payload)
+                case b'\x01':
+                    payload_size = sock.recv(1)
+                    payload = sock.recv(payload_size[0])
+                    print('[SERVER] Remaining time: ' + struct.unpack('>H', payload)[0])
+                case b'\x02':
+                    payload_size = sock.recv(1)
+                    payload = sock.recv(payload_size[0])
+                    print('[SERVER] Game over: ' + struct.unpack('>h', payload)[0])
+                case _:
+                    print('Unknown message type received. Aborting...')
+                    break
         
 def send_async(sock):
-    print('Start send_async')
+    print('Available commands: start, end, time, <guess>')
     while True:
-        message = input()
-        send_message(sock, message)
+        command = input()
+        match command:
+            case 'start':
+                send_command(sock, 0, None)
+            case 'end':
+                send_command(sock, 1, None)
+            case 'time':
+                send_command(sock, 2, None)
+            case _:
+                send_command(sock, 3, command.encode())
 
 def send_message(sock, message):
     sock.send(message.encode())
+    
+def send_command(sock, type, data):
+    command = bytearray()
+    command.append(type & 0xff) # ensure it's a byte
+    
+    if data:
+        payload_size = len(data)
+        command.append(payload_size & 0xff)
+    
+    match type:
+        case 0, 1, 2:
+            pass
+        case 3:
+            command.extend(data.encode())
+            
+    sock.send(command)
 
 def authenticate(sock, privateString):
     randomString = sock.recv(32).decode()

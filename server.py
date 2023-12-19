@@ -3,6 +3,7 @@ import hashlib
 import secrets
 import string
 import random
+import struct
 
 def create_socket():
     return socket(AF_INET, SOCK_STREAM)
@@ -18,6 +19,25 @@ def accept_connection(sock):
 
 def send_packet(sock, message):
     sock.send(message.encode())
+    
+def send_server_message(sock, type, data):
+    message = bytearray()
+    message.append(type & 0xff) # ensure it's a byte
+    
+    payload_size = len(data)
+    message.append(payload_size & 0xff)
+    
+    match type:
+        case 0:
+            message.extend(data.encode())
+        case 1:
+            message.extend(struct.pack('>H', data))
+        case 2:
+            message.extend(struct.pack('>h', data))
+        case _:
+            raise RuntimeError('Unknown packet type specified. Aborting...')
+            
+    send_packet(sock, message)
 
 def receive_packet(sock, buffer_size):
     return sock.recv(buffer_size).decode()
@@ -30,7 +50,7 @@ def start_game(sock):
 
     number = random.randint(0, 36)
     print('Number is ' + str(number))
-    send_packet(sock, str(number))
+    send_server_message(sock, 0, "What is your guess? Number, even, odd?")
 
 def update_game(sock):
     print('Update')
