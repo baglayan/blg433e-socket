@@ -16,13 +16,25 @@ import os
 in_game: bool = False
 game_start_event: threading.Event = threading.Event()
 
+def init_game() -> None:
+    global in_game, game_start_event
+    
+    in_game = True
+    game_start_event.set()
+    
+def finalize_game() -> None:
+    global in_game, game_start_event
+    
+    in_game = False
+    game_start_event.clear()
+
 def create_socket(serverName: str, serverPort: int) -> socket:
     clientSocket: socket = socket(AF_INET, SOCK_STREAM)
     clientSocket.connect((serverName, serverPort))
     return clientSocket
 
 def receive_async(sock: socket) -> None:
-    global in_game, game_start_event
+    global in_game
     payload_size: int
     payload: bytes
     while True:
@@ -30,8 +42,8 @@ def receive_async(sock: socket) -> None:
         if message_type:
             match message_type:
                 case b'\x00':
-                    in_game = True
-                    game_start_event.set()
+                    if not in_game:
+                        init_game()
                     payload_size: int = int.from_bytes(sock.recv(1))
                     payload: bytes = sock.recv(payload_size)
                     message: str = payload.decode()
@@ -39,12 +51,13 @@ def receive_async(sock: socket) -> None:
                 case b'\x01':
                     payload_size: int = int.from_bytes(sock.recv(1), 'big')
                     payload = sock.recv(payload_size)
-                    print('[SERVER] Remaining time: ' + payload.decode())
+                    print('[SERVER] Remaining time: ' + payload.decode() +" seconds")
                 case b'\x02':
-                    in_game = False
                     payload_size: int = int.from_bytes(sock.recv(1), 'big')
                     payload = sock.recv(payload_size)
                     print('[SERVER] ' + payload.decode())
+                    if in_game:
+                        finalize_game()
                 case _:
                     print('Unknown message type received. Aborting...')
                     break
@@ -54,18 +67,22 @@ def send_async_in_game(sock: socket) -> None:
     while True:
         while in_game:
             game_start_event.wait()
+            
             print('Available commands: end, time, <guess>')
-            print('Available guesses: a number from 0 to 36 (inclusive), \'even\', \'odd\'')
+            
             command: str = input()
             
-            match command:
+            match command.lower():
                 case 'end':
                     send_command(sock, bytearray(b'\x01'), None)
                 case 'time':
                     send_command(sock, bytearray(b'\x02'), None)
+                case 'even':
+                    send_command(sock, bytearray(b'\x03'), bytearray(command.encode()))
+                case 'odd':
+                    send_command(sock, bytearray(b'\x03'), bytearray(command.encode()))
                 case _:
                     send_command(sock, bytearray(b'\x03'), bytearray(command.encode()))
-            game_start_event.clear()
             
 def send_async_not_game(sock: socket) -> None:
     global in_game, game_start_event
@@ -76,10 +93,11 @@ def send_async_not_game(sock: socket) -> None:
             
             match command:
                 case 'start':
+                    init_game()
                     send_command(sock, bytearray(b'\x00'), None)
-                    in_game = True
                 case 'exit':
                     send_command(sock, bytearray(b'\x01'), None)
+                    finalize_game()
                     close_socket(sock)
                     os._exit(1)
                 case _:
@@ -140,14 +158,10 @@ def authenticate(sock: socket, privateString: str) -> None:
 def close_socket(sock: socket) -> None:
     sock.close()
 
-privateString: str = 'TSnYnfiJyMQYZqAbfptOPFfsmpWNMNEx'
-serverName: str = '13.48.194.17'
-serverPort: int = 3650
-
 def main() -> None:
     if len(sys.argv) > 1:
         privateString = sys.argv[1]
-    elif len(sys.argv) > 2:
+    if len(sys.argv) > 2:
         serverName = sys.argv[2].split(':')[0]
         serverPort = int(sys.argv[2].split(':')[1])
     else:
@@ -158,34 +172,34 @@ def main() -> None:
         serverName: str = 'localhost'
         serverPort: int = 12000
         
-        clientSocket: socket
-        print('Attempting to connect to server...')
-        
-        for connection_attempt in range(3):
-            try:
-                clientSocket = create_socket(serverName, serverPort)
-                break
-            except ConnectionRefusedError:
-                if connection_attempt < 2:
-                    print('Connection to server refused. Retrying...')
-                    time.sleep(2)
-                else:
-                    print('Could not connect to the server. Aborting...')
-                    os._exit(1)
+    clientSocket: socket
+    print('Attempting to connect to server...')
+    
+    for connection_attempt in range(3):
+        try:
+            clientSocket = create_socket(serverName, serverPort)
+            break
+        except ConnectionRefusedError:
+            if connection_attempt < 2:
+                print('Connection to server refused. Retrying...')
+                time.sleep(2)
+            else:
+                print('Could not connect to the server. Aborting...')
+                os._exit(1)
 
-        startConnectionString: str = 'Start_Connection'
-        
-        send_message(clientSocket, startConnectionString)
-        authenticate(clientSocket, privateString)
-        
-        receive_thread: threading.Thread = threading.Thread(target=receive_async, args=(clientSocket,))
-        receive_thread.start()
+    startConnectionString: str = 'Start_Connection'
+    
+    send_message(clientSocket, startConnectionString)
+    authenticate(clientSocket, privateString)
+    
+    receive_thread: threading.Thread = threading.Thread(target=receive_async, args=(clientSocket,))
+    receive_thread.start()
 
-        send_thread_in_game: threading.Thread = threading.Thread(target=send_async_in_game, args=(clientSocket,))
-        send_thread_in_game.start()
-        
-        send_thread_not_game: threading.Thread = threading.Thread(target=send_async_not_game, args=(clientSocket,))
-        send_thread_not_game.start()
+    send_thread_in_game: threading.Thread = threading.Thread(target=send_async_in_game, args=(clientSocket,))
+    send_thread_in_game.start()
+    
+    send_thread_not_game: threading.Thread = threading.Thread(target=send_async_not_game, args=(clientSocket,))
+    send_thread_not_game.start()
 
 if __name__ == '__main__':
     main()

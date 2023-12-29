@@ -9,15 +9,41 @@ import hashlib
 import secrets
 import string
 import random
+import sys
 import threading
 import time
 
 number: int
 remaining_time: int = 30
-in_game = False
-points = 0
+
+in_game: bool = False
+parity_guessed: bool = False
+points: int = 0
+
+timer_start_event: threading.Event = threading.Event()
+
+def init_game() -> None:
+    global remaining_time, in_game, parity_guessed, points, timer_start_event
+    
+    remaining_time = 30
+    in_game = True
+    parity_guessed = False
+    points = 0
+    timer_start_event.set()
+    
+    log('Game initalized')
+    
+def finalize_game() -> None:
+    global in_game, parity_guessed, points, timer_start_event
+    
+    in_game = False
+    parity_guessed = False
+    timer_start_event.clear()
+    
+    log('Game finalized')
 
 def wait_start(sock: socket) -> None:
+    global in_game
     log('Waiting for client to initiate game start')
     while True:
         message_type: bytes = sock.recv(1)
@@ -25,23 +51,28 @@ def wait_start(sock: socket) -> None:
             match message_type:
                 case b'\x00':
                     log('Client initiated game start')
-                    start_game(sock)
+                    if not in_game:
+                        start_game(sock)
+                    else:
+                        log('Client tried to start game while already in game. Ignoring')
                 case b'\x01':
                     log('Client quit before the game was even started')
                     break
                 case _:
-                    raise RuntimeError('Unknown packet type specified. Aborting')
+                    raise RuntimeError('Unknown packet type received. Aborting')
                 
 def timer_async(sock: socket) -> None:
-    global remaining_time, in_game, points
+    global remaining_time, in_game, points, timer_start_event
+    
+    timer_start_event.wait()
     
     log('Timer started')
     
     while True:
         if not in_game:
-            log('Timer stopped: not in game')
-            return
-        send_server_message(sock, bytearray(b'\x01'), bytearray(remaining_time))
+            continue
+        remaining_time_str = str(remaining_time)
+        send_server_message(sock, bytearray(b'\x01'), bytearray(remaining_time_str, 'utf-8'))
         remaining_time -= 3
         if remaining_time <= 0:
             points -= 1
@@ -49,43 +80,43 @@ def timer_async(sock: socket) -> None:
             game_log(f'Client now has {points} points')
             send_server_message(sock, bytearray(b'\x02'), bytearray("Your time is up! Be quicker next time.", 'utf-8'))
             send_server_message(sock, bytearray(b'\x02'), bytearray(f"You have {points} points.", 'utf-8'))
-            in_game = False
+            finalize_game()
             return
         time.sleep(3)
+        timer_start_event.clear()
 
 def start_game(sock: socket) -> None:
-    global in_game, remaining_time
-    in_game = True
-    remaining_time = 30
+    global remaining_time, parity_guessed, timer_start_event
     
-    log('Game started.')
+    init_game()
 
     global number
     number = random.randint(0, 36)
-    log('Number is ' + str(number))
+    game_log('Number is ' + str(number))
     
     update_game(sock)
     
     
 def update_game(sock: socket) -> None:
-    global number, points, in_game
+    global number, points, in_game, parity_guessed
     while True:
         if not in_game:
             return
         while in_game:
             send_server_message(sock, bytearray(b'\x00'), bytearray("What is your guess? Number, even, odd?", 'utf-8'))
-            message_type: bytes = sock.recv(1)
+            send_server_message(sock, bytearray(b'\x00'), bytearray("Available guesses: a number from 0 to 36 (inclusive), \'even\', \'odd\'", 'utf-8'))
+            message_type: bytes = receive_packet(sock, 1)
             
             match message_type:
                 case b'\x01':
-                    in_game = False
+                    finalize_game()
                 case b'\x02':
                     log('Client requested time')
                     send_server_message(sock, bytearray(b'\x01'), bytearray(remaining_time))
                 case b'\x03':
-                    payload_size: int = int.from_bytes(sock.recv(1))
+                    payload_size: int = int.from_bytes(receive_packet(sock, 1))
                     
-                    guess_payload: bytes  = sock.recv(payload_size)
+                    guess_payload: bytes  = receive_packet(sock, payload_size)
                     guess_str = guess_payload.decode()
                     guess = int | str
                     
@@ -102,7 +133,8 @@ def update_game(sock: socket) -> None:
                             game_log('Number received.')
                             handle_number_guess(sock, guess)
                         case False:
-                            handle_word_guess(sock, guess)
+                            if not parity_guessed:
+                                handle_word_guess(sock, guess)
                             
 def handle_number_guess(sock: socket, guess: int | str | type[int] | type[str]) -> None:
     global points, in_game
@@ -113,7 +145,7 @@ def handle_number_guess(sock: socket, guess: int | str | type[int] | type[str]) 
         game_log(f'Client now has {points} points')
         send_server_message(sock, bytearray(b'\x02'), bytearray("You won! Congratulations.", 'utf-8'))
         send_server_message(sock, bytearray(b'\x02'), bytearray(f"You have {points} points.", 'utf-8'))
-        in_game = False
+        finalize_game()
     else:
         game_log('Wrong guess')
         points -= 1
@@ -121,46 +153,49 @@ def handle_number_guess(sock: socket, guess: int | str | type[int] | type[str]) 
         game_log(f'Client now has {points} points')
         send_server_message(sock, bytearray(b'\x02'), bytearray("You lost! Better luck next time.", 'utf-8'))
         send_server_message(sock, bytearray(b'\x02'), bytearray(f"You have {points} points.", 'utf-8'))
-        in_game = False
+        finalize_game()
 
 def handle_word_guess(sock: socket, guess: str | int | type[int] | type[str]) -> None:
-    global points, in_game
+    global points, in_game, parity_guessed
+    
     if guess == "even":
         game_log('Even received.')
+        parity_guessed = True
         if number % 2 == 0:
             game_log('Correct guess')
             points += 1
             game_log('1 point added to client')
             game_log(f'Client now has {points} points')
-            send_server_message(sock, bytearray(b'\x02'), bytearray("You won! Congratulations.", 'utf-8'))
-            send_server_message(sock, bytearray(b'\x02'), bytearray(f"You have {points} points.", 'utf-8'))
-            in_game = False
+            send_server_message(sock, bytearray(b'\x00'), bytearray("You guessed correctly! Now guess the number.", 'utf-8'))
+            send_server_message(sock, bytearray(b'\x00'), bytearray("Available guesses: a number from 0 to 36 (inclusive)", 'utf-8'))
+            send_server_message(sock, bytearray(b'\x00'), bytearray(f"You have {points} points.", 'utf-8'))
         else:
             game_log('Wrong guess')
             points -= 1
             game_log('1 point deducted from client')
             game_log(f'Client now has {points} points')
-            send_server_message(sock, bytearray(b'\x02'), bytearray("You lost! Better luck next time.", 'utf-8'))
-            send_server_message(sock, bytearray(b'\x02'), bytearray(f"You have {points} points.", 'utf-8'))
-            in_game = False
+            send_server_message(sock, bytearray(b'\x00'), bytearray("Your guess is incorrect! But you can still guess the number.", 'utf-8'))
+            send_server_message(sock, bytearray(b'\x00'), bytearray("Available guesses: a number from 0 to 36 (inclusive)", 'utf-8'))
+            send_server_message(sock, bytearray(b'\x00'), bytearray(f"You have {points} points.", 'utf-8'))
     elif guess == "odd":
         game_log('Odd received.')
+        parity_guessed = True
         if number % 2 == 0:
             game_log('Wrong guess')
             points -= 1
             game_log('1 point deducted from client')
             game_log(f'Client now has {points} points')
-            send_server_message(sock, bytearray(b'\x02'), bytearray("You lost! Better luck next time.", 'utf-8'))
-            send_server_message(sock, bytearray(b'\x02'), bytearray(f"You have {points} points.", 'utf-8'))
-            in_game = False
+            send_server_message(sock, bytearray(b'\x00'), bytearray("Your guess is incorrect! But you can still guess the number.", 'utf-8'))
+            send_server_message(sock, bytearray(b'\x00'), bytearray("Available guesses: a number from 0 to 36 (inclusive)", 'utf-8'))
+            send_server_message(sock, bytearray(b'\x00'), bytearray(f"You have {points} points.", 'utf-8'))
         else:
-            game_log('Correct guess')
-            points += 1
-            game_log('1 point added to client')
-            game_log(f'Client now has {points} points')
-            send_server_message(sock, bytearray(b'\x02'), bytearray("You won! Congratulations.", 'utf-8'))
-            send_server_message(sock, bytearray(b'\x02'), bytearray(f"You have {points} points.", 'utf-8'))
-            in_game = False            
+            game_log('Unknown word guess')
+            send_server_message(sock, bytearray(b'\x00'), bytearray("Unknown guess", 'utf-8'))
+            send_server_message(sock, bytearray(b'\x00'), bytearray("Available guesses: a number from 0 to 36 (inclusive), \'even\', \'odd\'", 'utf-8'))
+            send_server_message(sock, bytearray(b'\x00'), bytearray(f"You have {points} points.", 'utf-8'))          
+        
+def info_log(message: str) -> None:
+    print('[INFO] ' + message)
         
 def log(message: str) -> None:
     print('[LOG] ' + message)
@@ -180,7 +215,7 @@ def bind_socket(sock: socket, port: int) -> None:
     except OSError:
         log('Port is already in use. Aborting')
         exit()
-
+        
 def start_listening(sock: socket) -> None:
     sock.listen(1)
 
@@ -221,8 +256,16 @@ def send_server_message(sock: socket, type: bytearray, data: bytearray) -> None:
             
     send_bytearray(sock, message)
 
-def receive_packet(sock: socket, buffer_size: int) -> str:
-    return sock.recv(buffer_size).decode()
+def receive_message(sock: socket, buffer_size: int) -> str:
+    return receive_packet(sock, buffer_size).decode()
+
+def receive_packet(sock: socket, buffer_size: int) -> bytes:
+    try:
+        return sock.recv(buffer_size)
+    except ConnectionResetError or ConnectionRefusedError or ConnectionAbortedError or ConnectionError as e:
+        log(f"Error receiving data: {e}")
+        return b''
+
 
 def close_connection(sock: socket) -> None:
     sock.close()
@@ -234,7 +277,7 @@ def authenticate(privateString: str, connectionSocket: socket) -> bool:
     concatString: str = privateString + randomString
     calculatedHash: str = hashlib.sha1(concatString.encode()).hexdigest()
     
-    receivedHash: str = receive_packet(connectionSocket, 40)
+    receivedHash: str = receive_message(connectionSocket, 40)
     
     if len(receivedHash) != 40:
         raise RuntimeError('Non-standard auth string received. Aborting')
@@ -251,9 +294,18 @@ def authenticate(privateString: str, connectionSocket: socket) -> bool:
     return True
 
 def main() -> None:
-    privateString: str = '43d48a355933d4964751cd8c3d1f4ffe'
+    if len(sys.argv) > 1:
+        privateString = sys.argv[1]
+        serverPort: int = 12000
+    if len(sys.argv) > 2:
+        serverPort = int(sys.argv[2])
+    else:
+        info_log('No arguments provided. Using default values for private string and server port.')
+        info_log('To use custom values, run the program in this format: python3 server.py <private string> <server port>')
 
-    serverPort: int = 12000
+        privateString: str = '43d48a355933d4964751cd8c3d1f4ffe'
+        serverPort: int = 12000
+    
     serverSocket: socket = create_socket()
     bind_socket(serverSocket, serverPort)
     start_listening(serverSocket)
@@ -263,13 +315,13 @@ def main() -> None:
     while True:
         connectionSocket, addr = accept_connection(serverSocket)
         print(addr)
-        message: str = receive_packet(connectionSocket, 1024)
+        message: str = receive_message(connectionSocket, 1024)
         if message == 'Start_Connection':
             auth_log('Beginning auth process')
             if not authenticate(privateString, connectionSocket):
                 break
             
-            proceed: str = receive_packet(connectionSocket, 1)
+            proceed: str = receive_message(connectionSocket, 1)
         
             if proceed.capitalize() == 'Y':
                 log('Game accepted by client')
