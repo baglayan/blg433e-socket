@@ -1,6 +1,7 @@
 # Meriç Bağlayan
 # 150190056
-# Server for BLG 433E Socket Programming assignmnet
+# BLG 433E 2023-2024 Fall Socket Programming assignment
+# Server
 
 # Requires Python 3.10 or higher
 
@@ -14,7 +15,8 @@ import threading
 import time
 
 number: int
-remaining_time: int = 30
+initial_time: int = 30
+remaining_time: int = initial_time
 
 in_game: bool = False
 parity_guessed: bool = False
@@ -23,9 +25,9 @@ points: int = 0
 timer_start_event: threading.Event = threading.Event()
 
 def init_game() -> None:
-    global remaining_time, in_game, parity_guessed, points, timer_start_event
+    global remaining_time, initial_time, in_game, parity_guessed, points, timer_start_event
     
-    remaining_time = 30
+    remaining_time = initial_time
     in_game = True
     parity_guessed = False
     points = 0
@@ -33,8 +35,8 @@ def init_game() -> None:
     
     log('Game initalized')
     
-def finalize_game() -> None:
-    global in_game, parity_guessed, points, timer_start_event
+def finalize_game(sock: socket) -> None:
+    global in_game, parity_guessed, points, timer_start_event, points
     
     in_game = False
     parity_guessed = False
@@ -59,7 +61,8 @@ def wait_start(sock: socket) -> None:
                     log('Client quit before the game was even started')
                     break
                 case _:
-                    raise RuntimeError('Unknown packet type received. Aborting')
+                    log('Unknown packet type received while waiting for start. Ignoring')
+                    print(f"[LOG] Received: {message_type}")
                 
 def timer_async(sock: socket) -> None:
     global remaining_time, in_game, points, timer_start_event
@@ -79,8 +82,8 @@ def timer_async(sock: socket) -> None:
             game_log('1 point deducted from client')
             game_log(f'Client now has {points} points')
             send_server_message(sock, bytearray(b'\x02'), bytearray("Your time is up! Be quicker next time.", 'utf-8'))
-            send_server_message(sock, bytearray(b'\x02'), bytearray(f"You have {points} points.", 'utf-8'))
-            finalize_game()
+            game_log(f'Client has {remaining_time} seconds remaining')
+            finalize_game(sock)
             return
         time.sleep(3)
         timer_start_event.clear()
@@ -109,10 +112,10 @@ def update_game(sock: socket) -> None:
             
             match message_type:
                 case b'\x01':
-                    finalize_game()
+                    finalize_game(sock)
                 case b'\x02':
                     log('Client requested time')
-                    send_server_message(sock, bytearray(b'\x01'), bytearray(remaining_time))
+                    send_server_message(sock, bytearray(b'\x01'), bytearray())
                 case b'\x03':
                     payload_size: int = int.from_bytes(receive_packet(sock, 1))
                     
@@ -145,7 +148,7 @@ def handle_number_guess(sock: socket, guess: int | str | type[int] | type[str]) 
         game_log(f'Client now has {points} points')
         send_server_message(sock, bytearray(b'\x02'), bytearray("You won! Congratulations.", 'utf-8'))
         send_server_message(sock, bytearray(b'\x02'), bytearray(f"You have {points} points.", 'utf-8'))
-        finalize_game()
+        finalize_game(sock)
     else:
         game_log('Wrong guess')
         points -= 1
@@ -153,7 +156,7 @@ def handle_number_guess(sock: socket, guess: int | str | type[int] | type[str]) 
         game_log(f'Client now has {points} points')
         send_server_message(sock, bytearray(b'\x02'), bytearray("You lost! Better luck next time.", 'utf-8'))
         send_server_message(sock, bytearray(b'\x02'), bytearray(f"You have {points} points.", 'utf-8'))
-        finalize_game()
+        finalize_game(sock)
 
 def handle_word_guess(sock: socket, guess: str | int | type[int] | type[str]) -> None:
     global points, in_game, parity_guessed
@@ -189,10 +192,18 @@ def handle_word_guess(sock: socket, guess: str | int | type[int] | type[str]) ->
             send_server_message(sock, bytearray(b'\x00'), bytearray("Available guesses: a number from 0 to 36 (inclusive)", 'utf-8'))
             send_server_message(sock, bytearray(b'\x00'), bytearray(f"You have {points} points.", 'utf-8'))
         else:
-            game_log('Unknown word guess')
-            send_server_message(sock, bytearray(b'\x00'), bytearray("Unknown guess", 'utf-8'))
-            send_server_message(sock, bytearray(b'\x00'), bytearray("Available guesses: a number from 0 to 36 (inclusive), \'even\', \'odd\'", 'utf-8'))
-            send_server_message(sock, bytearray(b'\x00'), bytearray(f"You have {points} points.", 'utf-8'))          
+            game_log('Correct guess')
+            points += 1
+            game_log('1 point added to client')
+            game_log(f'Client now has {points} points')
+            send_server_message(sock, bytearray(b'\x00'), bytearray("You guessed correctly! Now guess the number.", 'utf-8'))
+            send_server_message(sock, bytearray(b'\x00'), bytearray("Available guesses: a number from 0 to 36 (inclusive)", 'utf-8'))
+            send_server_message(sock, bytearray(b'\x00'), bytearray(f"You have {points} points.", 'utf-8'))
+    else:
+        game_log('Unknown word guess')
+        send_server_message(sock, bytearray(b'\x00'), bytearray("Unknown guess", 'utf-8'))
+        send_server_message(sock, bytearray(b'\x00'), bytearray("Available guesses: a number from 0 to 36 (inclusive), \'even\', \'odd\'", 'utf-8'))
+        send_server_message(sock, bytearray(b'\x00'), bytearray(f"You have {points} points.", 'utf-8'))          
         
 def info_log(message: str) -> None:
     print('[INFO] ' + message)
