@@ -51,7 +51,6 @@ def receive_async(sock: socket) -> None:
                     payload_size: int = int.from_bytes(sock.recv(1), 'big')
                     payload = sock.recv(payload_size)
                     print('[SERVER] ' + payload.decode())
-                    finalize_game()
                 case _:
                     print('Unknown message type received. Aborting...')
                     break
@@ -66,6 +65,8 @@ def send_async(sock: socket) -> None:
             
             command: str = input()
             
+            command_is_num = command.isnumeric()
+            
             match command.lower():
                 case 'end':
                     send_command(sock, bytearray(b'\x01'), None)
@@ -76,7 +77,11 @@ def send_async(sock: socket) -> None:
                 case 'odd':
                     send_command(sock, bytearray(b'\x03'), bytearray(command.encode()))
                 case _:
-                    send_command(sock, bytearray(b'\x03'), bytearray(command.encode()))
+                    if command_is_num:
+                        send_command(sock, bytearray(b'\x03'), bytearray(command.encode()))
+                        finalize_game()
+                    else:
+                        send_command(sock, bytearray(b'\x03'), bytearray(command.encode()))
         if not in_game:
             print('Available commands: start, exit')
             command: str = input()
